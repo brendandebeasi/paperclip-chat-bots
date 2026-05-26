@@ -6,6 +6,7 @@ import { createTelegramTransport } from "./transports/telegram.js";
 import { createWhatsAppTransport } from "./transports/whatsapp.js";
 import { makeInboundHandler, ISSUE_NS } from "./router.js";
 import { aliasForAgent } from "./agents.js";
+import { forwardInteraction, readInteraction } from "./interactions.js";
 import { chunkText, mdToTelegramHtml, truncate } from "./format.js";
 
 // Long-running worker: a stray rejection/exception must NOT kill the process
@@ -57,7 +58,46 @@ const plugin = definePlugin({
     };
     await getCompanyId(); // resolve within the initialize scope (companies.list is denied from the loop)
 
-    const onInbound = makeInboundHandler(ctx, cfg, getCompanyId);
+    // Board API client for the follow-up-question relay (submitting interaction answers).
+    // apiBase must be the canonical host URL (fetch can't set Host for the loopback allowlist).
+    let boardKey = null;
+    try {
+      const bk = cfg.board || {};
+      if (bk.keyFile) boardKey = readFileSync(bk.keyFile, "utf8").trim();
+      else if (bk.keyEnv && process.env[bk.keyEnv]) boardKey = String(process.env[bk.keyEnv]).trim();
+      else if (bk.keyRef) boardKey = await ctx.secrets.resolve(bk.keyRef);
+    } catch (e) {
+      ctx.logger.error("board key resolution failed", { err: e?.message || String(e) });
+    }
+    const boardApi = cfg.board?.apiBase && boardKey
+      ? async (method, path, body) =>
+          ctx.http.fetch(`${cfg.board.apiBase}${path}`, {
+            method,
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${boardKey}` },
+            body: body ? JSON.stringify(body) : undefined
+          })
+      : null;
+
+    // Cheap direct-chat key (OpenAI-compatible, e.g. Fireworks/Kimi). Stripped worker env →
+    // prefer an on-volume file (apiKeyFile), same pattern as the bot tokens / board key.
+    let llmKey = null;
+    if (cfg.llm?.enabled) {
+      try {
+        const lk = cfg.llm;
+        if (lk.apiKeyFile) llmKey = readFileSync(lk.apiKeyFile, "utf8").trim();
+        else if (lk.apiKeyEnv && process.env[lk.apiKeyEnv]) llmKey = String(process.env[lk.apiKeyEnv]).trim();
+        else if (lk.apiKeyRef) llmKey = await ctx.secrets.resolve(lk.apiKeyRef);
+      } catch (e) {
+        ctx.logger.error("llm key resolution failed", { err: e?.message || String(e) });
+      }
+      ctx.logger.info("chat-bots: direct-chat tier", {
+        enabled: !!(cfg.llm.model && llmKey),
+        model: cfg.llm.model,
+        escalateOn: cfg.escalate.commands
+      });
+    }
+
+    const onInbound = makeInboundHandler(ctx, cfg, getCompanyId, { boardApi, llmKey });
     const started = [];
 
     // ----- Telegram: one bot per agent -----
@@ -207,6 +247,32 @@ const plugin = definePlugin({
         ctx.logger.error("watchdog error", { err: e?.message || String(e) });
       }
     });
+
+    // Follow-up questions: forward an agent's issue-thread interaction to the origin chat.
+    // The user's reply is captured by the router (tryAnswerPending) and submitted via boardApi.
+    if (boardApi) {
+      ctx.events.on("issue.interactions.create", async (event) => {
+        try {
+          const { issueId } = readInteraction(event);
+          const iid = issueId || event.entityId;
+          if (!iid) return;
+          const map = await ctx.state.get({ scopeKind: "instance", namespace: ISSUE_NS, stateKey: iid });
+          if (!map) return; // not a chat-originated (tracked) issue
+          const tx = started.find((t) => t.botKey === map.botKey) || started[0];
+          if (!tx) return;
+          ctx.logger.info("chat-bots: forwarding interaction", {
+            issueId: iid,
+            entityType: event.entityType,
+            payloadKeys: Object.keys(event.payload || {})
+          });
+          await forwardInteraction(ctx, tx, map, event);
+        } catch (e) {
+          ctx.logger.error("interaction-forward error", { err: e?.message || String(e) });
+        }
+      });
+    } else {
+      ctx.logger.warn("chat-bots: board API not configured (board.{keyFile|keyEnv|keyRef} + apiBase) — follow-up questions disabled");
+    }
 
     ctx.logger.info("chat-bots setup complete", {
       bots: started.filter((t) => t.platform === "telegram").map((t) => t.botKey)

@@ -43,6 +43,39 @@
     "onIssueCreated": false
   },
 
+  // Cheap direct-chat tier (OpenAI-compatible). When enabled, an inbound message is answered
+  // by a DIRECT model call — no Paperclip issue, no agent run. The bound agent's persona is
+  // injected as the system prompt so the bot still sounds like that agent. Real, tracked work
+  // happens only via the escalation command below.
+  // Provide the key via ONE of: apiKeyFile (recommended) | apiKeyEnv | apiKeyRef.
+  "llm": {
+    "enabled": true,
+    "baseUrl": "https://api.fireworks.ai/inference/v1",
+    "model": "accounts/fireworks/models/kimi-k2p6",
+    "apiKeyFile": "/paperclip/.paperclip/chat-bots/fireworks-key",
+    "maxTokens": 1024,
+    "temperature": 0.7,
+    "historyTurns": 10,
+    // Per-agent-alias persona system prompts (falls back to systemPrompt, then a generic one).
+    "systemPrompt": "You are a helpful assistant. Be concise.",
+    "personas": {
+      "support": "You are the support assistant. Friendly, concise, solve the user's problem.",
+      "eng": "You are the engineering assistant. Precise and technical; prefer short answers."
+    }
+  },
+
+  // Messages starting with one of these commands open a tracked issue routed to the resolved
+  // agent (full agent w/ tools/skills) instead of a cheap chat reply. Also: "/reset" clears the
+  // chat history for the current conversation.
+  "escalate": { "commands": ["/task", "/issue"] },
+
+  // Board API — needed to relay agents' follow-up questions back to chat (interaction answers).
+  // apiBase must be the canonical host URL (the loopback enforces a hostname allowlist).
+  "board": {
+    "keyFile": "/paperclip/.paperclip/chat-bots/board-key",
+    "apiBase": "https://paperclip.example.com"
+  },
+
   // Optional: builds "open full reply in Paperclip" links on truncated messages.
   "paperclipPublicUrl": "https://paperclip.example.com",
   "maxReplyChars": 900

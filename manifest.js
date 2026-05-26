@@ -24,6 +24,7 @@ export default {
     "issues.create",
     "issues.update",
     "issue.comments.read",
+    "issue.interactions.create",
     "events.subscribe",
     "events.emit",
     "plugin.state.read",
@@ -37,12 +38,21 @@ export default {
   instanceConfigSchema: {
     type: "object",
     additionalProperties: true,
+    // NOTE: the host strips top-level keys NOT declared here (despite additionalProperties),
+    // so every persisted config key must be listed.
     properties: {
       telegram: { type: "object", additionalProperties: true },
       whatsapp: { type: "object", additionalProperties: true },
       rules: { type: "object", additionalProperties: true },
       notify: { type: "object", additionalProperties: true },
-      agentAliases: { type: "object", additionalProperties: true }
+      board: { type: "object", additionalProperties: true },
+      llm: { type: "object", additionalProperties: true },
+      escalate: { type: "object", additionalProperties: true },
+      agentAliases: { type: "object", additionalProperties: true },
+      companyId: { type: "string" },
+      paperclipPublicUrl: { type: "string" },
+      maxReplyChars: { type: "number" },
+      replyTimeoutMs: { type: "number" }
     }
   }
 };

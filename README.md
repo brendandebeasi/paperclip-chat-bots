@@ -13,10 +13,19 @@ admins → any agent".
 
 ## How it works
 
-- **Inbound:** a chat message is turned into a Paperclip **issue** assigned to the target agent. The
-  agent's clean completion summary is forwarded back to the originating chat. (Issues are used rather
-  than raw session streaming because a native agent's session stream is raw run stdout — tool calls and
-  system noise — whereas the completion summary is the intelligible answer.)
+- **Inbound (two tiers):**
+  - **Cheap chat (default, when `llm` is configured):** the message is answered by a **direct model
+    call** — no Paperclip issue, no agent run. Per-chat history is kept in plugin state and the bound
+    agent's persona is used as the system prompt, so the bot still sounds like that agent. Ideal for
+    casual Q&A without flooding the issue tracker. See **Cheap direct-chat tier** below.
+  - **Tracked work (escalation):** a message starting with an escalation command (default `/task` or
+    `/issue`) is turned into a Paperclip **issue** assigned to the agent — the full agent with
+    tools/skills. The agent's completion summary is forwarded back to the chat. (Issues are used here
+    rather than raw session streaming because a native agent's session stream is raw run stdout —
+    tool calls and system noise — whereas the completion summary is the intelligible answer.)
+  - If `llm` is **not** configured, every message falls back to the issue path (the original behaviour).
+- **Follow-up questions:** if an escalated agent asks a clarifying question mid-run, it's relayed to the
+  chat and your reply is submitted back via the board API (requires `board`).
 - **One bot per agent:** DM an agent's own bot to talk to that agent directly — no in-message `@mention`
   needed. An explicit `@agent` can still redirect within a chat if the sender is allowed that agent.
 - **Outbound:** post to **DM / group / group+thread** (Telegram forum topic = `message_thread_id`) and
@@ -103,7 +112,26 @@ See [`config.example.jsonc`](./config.example.jsonc) for a fully commented examp
 - `rules` — `{ defaultDeny, defaultAgent, users: { "<telegramUserId>": { name, agents } } }`.
   `agents: ["*"]` allows all; `agents: ["support"]` restricts to one.
 - `notify` — optional outbound notifications: `{ defaultChatId, approvalsChatId?, agent, onApproval, onIssueCreated }`.
+- `llm` — the cheap direct-chat tier (see below): `{ enabled, baseUrl, model, apiKeyFile|apiKeyEnv|apiKeyRef, maxTokens, temperature, historyTurns, systemPrompt, personas }`.
+- `escalate` — `{ commands: ["/task","/issue"] }`: prefixes that open a tracked issue instead of a chat reply.
+- `board` — `{ keyFile|keyEnv|keyRef, apiBase }`: board API access for relaying agents' follow-up questions.
 - `paperclipPublicUrl` — optional; used to build "open full reply in Paperclip" links on truncated messages.
+
+## Cheap direct-chat tier
+
+Set `llm.enabled: true` with a `model` and key to make casual messages cheap: instead of opening an
+issue (and spawning a full agent run) per message, the plugin answers with a **direct
+OpenAI-compatible Chat Completions call** — e.g. **Kimi 2.6 on Fireworks**
+(`model: "accounts/fireworks/models/kimi-k2p6"`, `baseUrl: "https://api.fireworks.ai/inference/v1"`).
+
+- **No issue flooding, no agent runs** — just a model call. Per-chat history lives in plugin state
+  (last `historyTurns` round-trips). `/reset` (or `/new`, `/clear`) starts a fresh conversation.
+- **Persona preserved** — the bound agent's prompt from `llm.personas[<alias>]` (falling back to
+  `llm.systemPrompt`) is sent as the system message, so the bot still sounds like that agent.
+- **Escalate for real work** — prefix a message with `/task` (or `/issue`) to open a tracked issue
+  routed to the agent with its full tools/skills. That's the only path that touches the issue tracker.
+- **Key** comes from `apiKeyFile` (recommended; same on-volume-file pattern as the bot tokens),
+  `apiKeyEnv`, or `apiKeyRef`. Leave `llm.enabled` false to route everything through issues as before.
 
 ### Finding Telegram IDs
 

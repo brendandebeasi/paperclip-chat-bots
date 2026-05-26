@@ -30,6 +30,9 @@ export function parseConfig(raw) {
   const wa = c.whatsapp && typeof c.whatsapp === "object" ? c.whatsapp : {};
   const rules = c.rules && typeof c.rules === "object" ? c.rules : {};
   const notify = c.notify && typeof c.notify === "object" ? c.notify : {};
+  const board = c.board && typeof c.board === "object" ? c.board : {};
+  const llm = c.llm && typeof c.llm === "object" ? c.llm : {};
+  const escalate = c.escalate && typeof c.escalate === "object" ? c.escalate : {};
 
   // Bots list; fall back to a legacy single-bot shape if present.
   let bots = Array.isArray(tg.bots) ? tg.bots : [];
@@ -86,6 +89,40 @@ export function parseConfig(raw) {
     // Leave null to skip the link (e.g. https://paperclip.example.com).
     paperclipPublicUrl: c.paperclipPublicUrl ?? null,
     // Verbose replies are truncated to this and linked to the full Paperclip thread.
-    maxReplyChars: Number(c.maxReplyChars ?? 900)
+    maxReplyChars: Number(c.maxReplyChars ?? 900),
+    // Board API access for the follow-up-question relay (submitting interaction answers).
+    // apiBase MUST be the canonical host URL — the loopback enforces a hostname allowlist and
+    // fetch() can't set Host; defaults to paperclipPublicUrl. Key via file/env/secret-ref.
+    board: {
+      keyFile: board.keyFile ?? null,
+      keyEnv: board.keyEnv ?? null,
+      keyRef: board.keyRef ?? null,
+      apiBase: board.apiBase ?? c.paperclipPublicUrl ?? null
+    },
+    // Cheap direct-chat backend (OpenAI-compatible). When enabled, inbound messages are
+    // answered by a direct model call (NO issue, NO agent run); escalation creates an issue.
+    // Key via file/env/secret-ref (the worker has a stripped env — prefer apiKeyFile).
+    llm: {
+      enabled: llm.enabled ?? false,
+      baseUrl: llm.baseUrl ?? "https://api.fireworks.ai/inference/v1",
+      model: llm.model ?? null, // e.g. "accounts/fireworks/models/kimi-k2p6"
+      apiKeyFile: llm.apiKeyFile ?? null,
+      apiKeyEnv: llm.apiKeyEnv ?? null,
+      apiKeyRef: llm.apiKeyRef ?? null,
+      maxTokens: Number(llm.maxTokens ?? 1024),
+      temperature: Number(llm.temperature ?? 0.7),
+      historyTurns: Number(llm.historyTurns ?? 10),
+      systemPrompt: typeof llm.systemPrompt === "string" ? llm.systemPrompt : null,
+      // Per-agent-alias persona system prompts (alias -> prompt). Falls back to systemPrompt.
+      personas: llm.personas && typeof llm.personas === "object" ? llm.personas : {}
+    },
+    // Escalation: messages starting with one of these commands create a tracked issue routed
+    // to the resolved agent (full agent w/ tools/skills) instead of a direct chat reply.
+    escalate: {
+      commands:
+        Array.isArray(escalate.commands) && escalate.commands.length
+          ? escalate.commands.map((s) => String(s).toLowerCase())
+          : ["/task", "/issue"]
+    }
   };
 }
