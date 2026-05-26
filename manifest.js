@@ -24,7 +24,10 @@ export default {
     "issues.create",
     "issues.update",
     "issue.comments.read",
-    "issue.interactions.create",
+    // NOTE: do NOT declare "issue.interactions.create" — declaring it makes the host fail
+    // worker activation ("Worker process exited code=0"). The interactions relay only
+    // *subscribes* to the issue.interactions.create EVENT (covered by events.subscribe) and
+    // answers via the board API (http.outbound); it never calls issues.createInteraction.
     "events.subscribe",
     "events.emit",
     "plugin.state.read",
