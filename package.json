@@ -1,0 +1,12 @@
+{
+  "name": "paperclip-plugin-chat-bots",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "description": "Platform-agnostic chat-bot plugin for Paperclip (Telegram + WhatsApp) with per-user -> per-agent routing rules.",
+  "homepage": "https://github.com/brendandebeasi/paperclip-chat-bots",
+  "repository": { "type": "git", "url": "https://github.com/brendandebeasi/paperclip-chat-bots.git" },
+  "paperclipPlugin": { "manifest": "./manifest.js", "worker": "./worker.js" },
+  "main": "./index.js",
+  "peerDependencies": { "@paperclipai/plugin-sdk": "*" }
+}

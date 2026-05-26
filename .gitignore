@@ -1,0 +1,17 @@
+node_modules/
+*.log
+
+# Bot tokens / secrets — never commit these
+tg-token-*
+*.token
+secrets.env
+
+# WhatsApp (Baileys) auth state
+wa-session/
+*-session/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/

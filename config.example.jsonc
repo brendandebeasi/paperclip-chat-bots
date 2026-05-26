@@ -1,0 +1,49 @@
+// Example config for paperclip-plugin-chat-bots.
+// Set via: POST /api/plugins/:id/config  with body { "configJson": { ...this... } }
+// (JSONC here for comments — send real JSON to the API.)
+{
+  "telegram": {
+    "enabled": true,
+    // One bot per agent. DM a bot to talk to its bound agent directly.
+    // Provide the token via ONE of: botTokenFile (recommended) | botTokenEnv | botTokenRef.
+    "bots": [
+      { "agent": "support", "botTokenFile": "/paperclip/.paperclip/chat-bots/tg-token-support" },
+      { "agent": "eng",     "botTokenFile": "/paperclip/.paperclip/chat-bots/tg-token-eng" }
+      // { "agent": "support", "botTokenEnv": "TG_TOKEN_SUPPORT" }
+      // { "agent": "support", "botTokenRef": "secret://telegram/support" }
+    ],
+    "pollIntervalMs": 1500,
+    "drainOnStart": true
+  },
+
+  // WhatsApp is a Phase 2 stub today.
+  "whatsapp": { "enabled": false },
+
+  // Optional: alias -> Paperclip agentId. If omitted, aliases resolve by agent urlKey/name.
+  "agentAliases": {
+    "support": "<agentId>",
+    "eng": "<agentId>"
+  },
+
+  // Access control: default-deny, per Telegram user id -> allowed agent aliases.
+  "rules": {
+    "defaultDeny": true,
+    "defaultAgent": "support",
+    "users": {
+      "<telegramUserId_owner>":    { "name": "Owner",    "agents": ["*"] },
+      "<telegramUserId_teammate>": { "name": "Teammate", "agents": ["support"] }
+    }
+  },
+
+  // Optional outbound notifications (sent via the chosen bot).
+  "notify": {
+    "defaultChatId": "<telegramChatId>",
+    "agent": "support",
+    "onApproval": true,
+    "onIssueCreated": false
+  },
+
+  // Optional: builds "open full reply in Paperclip" links on truncated messages.
+  "paperclipPublicUrl": "https://paperclip.example.com",
+  "maxReplyChars": 900
+}
