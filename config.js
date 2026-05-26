@@ -114,7 +114,13 @@ export function parseConfig(raw) {
       historyTurns: Number(llm.historyTurns ?? 10),
       systemPrompt: typeof llm.systemPrompt === "string" ? llm.systemPrompt : null,
       // Per-agent-alias persona system prompts (alias -> prompt). Falls back to systemPrompt.
-      personas: llm.personas && typeof llm.personas === "object" ? llm.personas : {}
+      personas: llm.personas && typeof llm.personas === "object" ? llm.personas : {},
+      // Agent roster the router can delegate to: alias -> short role description. Used to build
+      // the router's system prompt so it picks the right agent. Restricted to the user's allowed
+      // agents at runtime.
+      agents: llm.agents && typeof llm.agents === "object" ? llm.agents : {},
+      // Run an agent's completion through the model to produce a concise chat reply.
+      summarizeReplies: llm.summarizeReplies ?? true
     },
     // Escalation: messages starting with one of these commands create a tracked issue routed
     // to the resolved agent (full agent w/ tools/skills) instead of a direct chat reply.

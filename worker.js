@@ -7,6 +7,7 @@ import { createWhatsAppTransport } from "./transports/whatsapp.js";
 import { makeInboundHandler, ISSUE_NS } from "./router.js";
 import { aliasForAgent } from "./agents.js";
 import { forwardInteraction, readInteraction } from "./interactions.js";
+import { llmConfigured, summarize } from "./chat.js";
 import { chunkText, mdToTelegramHtml, truncate } from "./format.js";
 
 // Long-running worker: a stray rejection/exception must NOT kill the process
@@ -179,6 +180,11 @@ const plugin = definePlugin({
         }
         if (!reply && p.comment) reply = String(p.comment);
         if (!reply) reply = "✅ Done.";
+
+        // Cheap-model write-up: condense the agent's result into a concise chat reply.
+        if (reply !== "✅ Done." && llmConfigured(cfg, llmKey) && cfg.llm.summarizeReplies) {
+          try { reply = await summarize(ctx, cfg, llmKey, reply); } catch { /* keep the raw reply */ }
+        }
 
         // Keep TG concise: truncate verbose replies and link to the full Paperclip thread.
         let out = reply;
