@@ -3,7 +3,7 @@
 export default {
   id: "paperclip-plugin-chat-bots",
   apiVersion: 1,
-  version: "0.4.0",
+  version: "0.4.1",
   displayName: "Chat Bots",
   description:
     "Platform-agnostic chat bots (Telegram + WhatsApp) with per-user -> per-agent routing rules. " +

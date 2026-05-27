@@ -18,14 +18,41 @@ const DEAD_STATUS = new Set(["cancelled", "archived"]);
 // Statuses where the agent is already running -> post the comment but don't re-trigger a run.
 const RUNNING_STATUS = new Set(["running", "in_progress"]);
 
+// IMPORTANT: issue mutations/reads here run in the Telegram poll-loop context, which has NO host
+// invocation scope — so ctx.issues.update/get throw "not allowed ... missing invocation scope".
+// We go through the board API (unscoped admin REST, same path as the comment/interaction relay),
+// falling back to the SDK only if no board key is configured.
+
+// Set an issue's status. Returns true on success.
+export async function setIssueStatus(ctx, boardApi, companyId, issueId, status) {
+  if (boardApi) {
+    try {
+      const res = await boardApi("PATCH", `/api/issues/${issueId}`, { status });
+      if (res && (res.ok === true || (typeof res.status === "number" && res.status >= 200 && res.status < 300))) return true;
+    } catch { /* fall through to SDK */ }
+  }
+  try { await ctx.issues.update(issueId, { status }, companyId); return true; } catch { return false; }
+}
+
+// Fetch an issue (for the resumability check). Returns the issue object or null.
+async function fetchIssue(ctx, boardApi, companyId, issueId) {
+  if (boardApi) {
+    try {
+      const res = await boardApi("GET", `/api/issues/${issueId}`);
+      if (res && res.ok !== false) { const j = await res.json().catch(() => null); if (j && j.id) return j; }
+      return null;
+    } catch { /* fall through to SDK */ }
+  }
+  try { return await ctx.issues.get(issueId, companyId); } catch { return null; }
+}
+
 // Resolve the chat's active thread, verifying the issue still exists and is resumable.
 // Returns { issueId, agent, status, title } or null (and clears a dead/missing pointer).
-export async function getActiveThread(ctx, platform, botKey, chatId, companyId) {
+export async function getActiveThread(ctx, boardApi, platform, botKey, chatId, companyId) {
   let rec = null;
   try { rec = await ctx.state.get(activeKey(platform, botKey, chatId)); } catch { /* ignore */ }
   if (!rec || !rec.issueId) return null;
-  let issue = null;
-  try { issue = await ctx.issues.get(rec.issueId, companyId); } catch { /* ignore */ }
+  const issue = await fetchIssue(ctx, boardApi, companyId, rec.issueId);
   if (!issue || DEAD_STATUS.has(String(issue.status))) {
     await clearActiveThread(ctx, platform, botKey, chatId);
     return null;
@@ -53,7 +80,7 @@ export async function continueThread(ctx, boardApi, companyId, thread, text) {
   } catch { ok = false; }
   if (!ok) return false;
   if (!RUNNING_STATUS.has(thread.status)) {
-    try { await ctx.issues.update(thread.issueId, { status: "todo" }, companyId); } catch { /* non-fatal */ }
+    await setIssueStatus(ctx, boardApi, companyId, thread.issueId, "todo");
   }
   return true;
 }

@@ -7,7 +7,7 @@ import { userPolicy, allowedAgents, botAllowsUser, effectiveRoster, parseMention
 import { resolveAgentId } from "./agents.js";
 import { tryAnswerPending } from "./interactions.js";
 import { llmConfigured, routeMessage } from "./chat.js";
-import { getActiveThread, setActiveThread, continueThread } from "./thread.js";
+import { getActiveThread, setActiveThread, continueThread, setIssueStatus } from "./thread.js";
 import { truncate } from "./format.js";
 
 // If `text` begins with one of `commands` (e.g. "/task"), return the remainder (task body);
@@ -77,12 +77,14 @@ export function makeInboundHandler(ctx, cfg, getCompanyId, deps = {}) {
           description: body,
           assigneeAgentId: agentId
         });
-        await ctx.issues.update(issue.id, { status: "todo" }, companyId);
       } catch (e) {
         ctx.logger.error("issue create failed", { err: e?.message || String(e) });
         await tx.sendText(target, "Couldn't start that just now — try again shortly.");
         return;
       }
+      // Trigger the run via the board API — ctx.issues.update has no invocation scope from the
+      // poll loop ("not allowed to perform issues.update"); the board key works regardless.
+      await setIssueStatus(ctx, deps.boardApi, companyId, issue.id, "todo");
       // Map issue -> originating chat/bot so completion + follow-up questions route back here.
       try {
         await ctx.state.set(
@@ -123,7 +125,7 @@ export function makeInboundHandler(ctx, cfg, getCompanyId, deps = {}) {
 
     // 3) Default: the cheap model decides continue-thread / new-thread / direct reply.
     if (llmConfigured(cfg, deps.llmKey)) {
-      const active = await getActiveThread(ctx, tx.platform, msg.botKey, msg.chatId, companyId);
+      const active = await getActiveThread(ctx, deps.boardApi, tx.platform, msg.botKey, msg.chatId, companyId);
       // Only offer continuation if the thread's agent is still reachable on this (bot, user).
       const offer = active && rosterAliases.has(String(active.agent || "")) ? active : null;
       const decision = await routeMessage(ctx, cfg, deps.llmKey, tx, msg, text, roster, offer);
