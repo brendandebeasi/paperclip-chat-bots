@@ -59,6 +59,17 @@ const plugin = definePlugin({
     };
     await getCompanyId(); // resolve within the initialize scope (companies.list is denied from the loop)
 
+    // Preload the agent roster HERE (setup has an invocation scope; the background poll loop does
+    // NOT — ctx.agents.list throws "missing invocation scope" from onInbound). Cached for alias->id
+    // resolution so the inbound path needs no scoped agents.list and no per-message fetch.
+    let agentRoster = [];
+    try {
+      if (companyId) agentRoster = (await ctx.agents.list({ companyId })) || [];
+      ctx.logger.info("chat-bots: agent roster preloaded", { count: agentRoster.length });
+    } catch (e) {
+      ctx.logger.warn("chat-bots: agent roster preload failed (falling back per-message)", { err: e?.message || String(e) });
+    }
+
     // Board API client for the follow-up-question relay (submitting interaction answers).
     // apiBase must be the canonical host URL (fetch can't set Host for the loopback allowlist).
     let boardKey = null;
@@ -98,7 +109,7 @@ const plugin = definePlugin({
       });
     }
 
-    const onInbound = makeInboundHandler(ctx, cfg, getCompanyId, { boardApi, llmKey });
+    const onInbound = makeInboundHandler(ctx, cfg, getCompanyId, { boardApi, llmKey, agents: agentRoster });
     const started = [];
 
     // ----- Telegram: one bot per agent -----

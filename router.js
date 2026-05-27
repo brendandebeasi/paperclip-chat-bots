@@ -67,7 +67,7 @@ export function makeInboundHandler(ctx, cfg, getCompanyId, deps = {}) {
     const delegate = async (rawAlias, body) => {
       const alias = String(rawAlias || "").toLowerCase().trim();
       if (!alias || !rosterAliases.has(alias)) { await tx.sendText(target, "Sorry — I can't help with that here."); return; }
-      const agentId = await resolveAgentId(ctx, cfg, companyId, alias, deps.boardApi);
+      const agentId = await resolveAgentId(ctx, cfg, companyId, alias, deps.boardApi, deps.agents);
       if (!agentId) { await tx.sendText(target, "Something went wrong routing that — try again shortly."); return; }
       // Create through the board API — the poll loop has no SDK invocation scope (agents.list /
       // issues.update fail; create is unreliable too). Fall back to the SDK only without a board key.

@@ -6,15 +6,16 @@
 // extra nicknames (e.g. { ada: ["ada", "ada-cto", "cto"] }) without an explicit id mapping.
 const KNOWN_SYNONYMS = {};
 
-export async function resolveAgentId(ctx, cfg, companyId, alias, boardApi) {
+export async function resolveAgentId(ctx, cfg, companyId, alias, boardApi, cachedAgents) {
   const a = String(alias).toLowerCase();
   const mapped = cfg.agentAliases?.[a];
   if (mapped) return mapped;
   const syns = KNOWN_SYNONYMS[a] || [a];
-  let agents = [];
-  // The Telegram poll loop has no SDK invocation scope (agents.list throws "missing invocation
-  // scope"), so prefer the board API; fall back to the SDK only if no board key is configured.
-  if (boardApi) {
+  // Prefer the roster preloaded in setup() — the Telegram poll loop has no SDK invocation scope, so
+  // ctx.agents.list throws "missing invocation scope" from here. The board-API GET is a secondary
+  // fallback; the scope-gated SDK call is the last resort (and only succeeds with an active scope).
+  let agents = Array.isArray(cachedAgents) ? cachedAgents : [];
+  if (!agents.length && boardApi) {
     try {
       const res = await boardApi("GET", `/api/companies/${companyId}/agents`);
       if (res && res.ok !== false) { const j = await res.json().catch(() => null); if (Array.isArray(j)) agents = j; }
