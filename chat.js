@@ -176,6 +176,15 @@ export async function routeMessage(ctx, cfg, llmKey, tx, msg, prompt, roster, ac
   };
 
   const calls = Array.isArray(m?.tool_calls) ? m.tool_calls : [];
+  // Diagnostic: exactly what the router got back (tool names + raw args + content length).
+  ctx.logger.info("chat-bots: router result", {
+    mNull: !m,
+    toolChoice: cfg.llm.toolChoice || "required",
+    hadActiveThread: !!activeThread,
+    tools: calls.map((t) => t?.function?.name || "?"),
+    argsSample: String(calls[0]?.function?.arguments || "").slice(0, 200),
+    contentLen: String(m?.content || "").length
+  });
   const pick = (name) => calls.find((t) => t?.function?.name === name);
 
   // Follow-up to the active thread: caller posts the user's message as a comment + resumes the agent.
