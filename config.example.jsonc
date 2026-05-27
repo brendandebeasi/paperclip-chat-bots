@@ -4,13 +4,24 @@
 {
   "telegram": {
     "enabled": true,
-    // One bot per agent. DM a bot to talk to its bound agent directly.
+    // Each bot has a `mode`:
+    //   "concierge" (default) — one front-door identity that routes across a roster of agents and
+    //                           replies in one voice; specialists are never surfaced to the user.
+    //   "direct"              — bound to its single `agent`, no cross-delegation.
+    // The agents a user can actually reach through a bot = (the bot's offering) ∩ (the user's
+    // rules.users scope). Topic routing within that set is the cheap model's job (llm.agents blurbs).
     // Provide the token via ONE of: botTokenFile (recommended) | botTokenEnv | botTokenRef.
     "bots": [
-      { "agent": "support", "botTokenFile": "/paperclip/.paperclip/chat-bots/tg-token-support" },
-      { "agent": "eng",     "botTokenFile": "/paperclip/.paperclip/chat-bots/tg-token-eng" }
-      // { "agent": "support", "botTokenEnv": "TG_TOKEN_SUPPORT" }
-      // { "agent": "support", "botTokenRef": "secret://telegram/support" }
+      // Single concierge front door (e.g. Chad): routes to anyone in `roster` (or all llm.agents if omitted).
+      {
+        "agent": "chad",
+        "botTokenFile": "/paperclip/.paperclip/chat-bots/tg-token-chad",
+        "mode": "concierge",
+        "roster": ["brendina", "gregory", "emma", "researcher"]
+        // "allowUsers": ["*"]   // optional per-bot DM allow-list; omit to rely on rules.users
+      }
+      // Or direct specialist bots (no cross-delegation):
+      // { "agent": "emma", "botTokenFile": "/paperclip/.paperclip/chat-bots/tg-token-emma", "mode": "direct" }
     ],
     "pollIntervalMs": 1500,
     "drainOnStart": true
@@ -43,24 +54,27 @@
     "onIssueCreated": false
   },
 
-  // Cheap direct-chat tier (OpenAI-compatible). When enabled, an inbound message is answered
-  // by a DIRECT model call — no Paperclip issue, no agent run. The bound agent's persona is
-  // injected as the system prompt so the bot still sounds like that agent. Real, tracked work
-  // happens only via the escalation command below.
-  // Provide the key via ONE of: apiKeyFile (recommended) | apiKeyEnv | apiKeyRef.
+  // Cheap router/concierge tier (OpenAI-compatible). The model does NOT do work itself: it decides,
+  // per message, whether to CONTINUE the chat's active thread (post the message as a comment so the
+  // assigned agent resumes), open a NEW thread (delegate to the best-fit agent as a tracked issue),
+  // or REPLY directly (greetings / one clarifying question). Agent results are summarised back in one
+  // voice. Provide the key via ONE of: apiKeyFile (recommended) | apiKeyEnv | apiKeyRef.
   "llm": {
     "enabled": true,
     "baseUrl": "https://api.fireworks.ai/inference/v1",
     "model": "accounts/fireworks/models/kimi-k2p6",
     "apiKeyFile": "/paperclip/.paperclip/chat-bots/fireworks-key",
     "maxTokens": 1024,
-    "temperature": 0.7,
-    "historyTurns": 10,
-    // Per-agent-alias persona system prompts (falls back to systemPrompt, then a generic one).
-    "systemPrompt": "You are a helpful assistant. Be concise.",
-    "personas": {
-      "support": "You are the support assistant. Friendly, concise, solve the user's problem.",
-      "eng": "You are the engineering assistant. Precise and technical; prefer short answers."
+    "temperature": 0.4,
+    "historyTurns": 12,
+    "summarizeReplies": true,
+    // Delegation roster: agent alias -> short role blurb. Drives the model's topic routing; always
+    // filtered to (bot roster ∩ user scope) at runtime.
+    "agents": {
+      "brendina": "CTO — engineering, infrastructure, DevOps, code, technical investigation.",
+      "gregory": "Executive assistant — scheduling, email, ops, partnerships, general requests.",
+      "emma": "CMO — marketing, content, social media, community, PR, brand.",
+      "researcher": "Research — web research, fact-finding, competitive/market lookups."
     }
   },
 

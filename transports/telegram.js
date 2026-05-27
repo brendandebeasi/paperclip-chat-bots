@@ -12,7 +12,7 @@ import { stripHtml } from "../format.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export function createTelegramTransport(ctx, cfg, { token, boundAgent, botKey }) {
+export function createTelegramTransport(ctx, cfg, { token, boundAgent, botKey, bot }) {
   const base = `https://api.telegram.org/bot${token}`;
   const offsetKey = { scopeKind: "instance", namespace: "chat-bots", stateKey: `tg-offset:${botKey}` };
   let running = false;
@@ -62,6 +62,7 @@ export function createTelegramTransport(ctx, cfg, { token, boundAgent, botKey })
     platform: "telegram",
     boundAgent,
     botKey,
+    bot: bot || { agent: boundAgent, mode: "concierge", roster: null, allowUsers: null },
 
     async sendText(target, text, opts = {}) {
       const body = { chat_id: target.chatId, text: String(text ?? ""), disable_notification: !!opts.silent };

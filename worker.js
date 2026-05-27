@@ -7,7 +7,7 @@ import { createWhatsAppTransport } from "./transports/whatsapp.js";
 import { makeInboundHandler, ISSUE_NS } from "./router.js";
 import { aliasForAgent } from "./agents.js";
 import { forwardInteraction, readInteraction } from "./interactions.js";
-import { llmConfigured, summarize } from "./chat.js";
+import { llmConfigured, summarize, recordAssistantReply } from "./chat.js";
 import { chunkText, mdToTelegramHtml, truncate } from "./format.js";
 
 // Long-running worker: a stray rejection/exception must NOT kill the process
@@ -112,7 +112,7 @@ const plugin = definePlugin({
           continue;
         }
         const botKey = b.agent || `bot${i}`;
-        const tx = createTelegramTransport(ctx, cfg, { token, boundAgent: b.agent, botKey });
+        const tx = createTelegramTransport(ctx, cfg, { token, boundAgent: b.agent, botKey, bot: b });
         try {
           tx.start(onInbound); // returns immediately; loop runs in background
           started.push(tx);
@@ -159,27 +159,30 @@ const plugin = definePlugin({
         if (!issueId) return;
         const key = { scopeKind: "instance", namespace: ISSUE_NS, stateKey: issueId };
         const map = await ctx.state.get(key);
-        if (!map || map.replied) return; // not ours, or already answered
+        if (!map) return; // not a chat-originated (tracked) issue
         const tx = started.find((t) => t.botKey === map.botKey) || started[0];
         if (!tx) return;
 
-        // The agent's answer is posted as an issue COMMENT, which may land just AFTER the
-        // done event — retry briefly. Take the latest non-empty comment.
-        let reply = "";
-        for (let i = 0; i < 5 && !reply; i++) {
-          try {
-            const cs = await ctx.issues.listComments(issueId, event.companyId);
-            if (Array.isArray(cs)) {
-              for (let j = cs.length - 1; j >= 0; j--) {
-                const b = cs[j]?.body || cs[j]?.content;
-                if (b && b.trim()) { reply = b.trim(); break; }
-              }
-            }
-          } catch { /* ignore */ }
-          if (!reply) await new Promise((r) => setTimeout(r, 1500));
+        // Forward only the AGENT's reply (authorType:"agent"), and only comments posted since we last
+        // forwarded — so multi-round threads don't re-send, and the user's own comments (authorType:
+        // "user", posted by the continue path) are never echoed back. The answer comment may land just
+        // AFTER the done event, so retry briefly.
+        const newAgentComments = (list, lastId) => {
+          if (!Array.isArray(list)) return [];
+          let start = 0;
+          if (lastId) { const i = list.findIndex((c) => c?.id === lastId); if (i >= 0) start = i + 1; }
+          return list.slice(start).filter((c) => c?.authorType === "agent" && String(c?.body || c?.content || "").trim());
+        };
+        let fresh = [];
+        for (let i = 0; i < 5 && !fresh.length; i++) {
+          try { fresh = newAgentComments(await ctx.issues.listComments(issueId, event.companyId), map.lastForwardedCommentId); }
+          catch { /* ignore */ }
+          if (!fresh.length) await new Promise((r) => setTimeout(r, 1500));
         }
-        if (!reply && p.comment) reply = String(p.comment);
-        if (!reply) reply = "✅ Done.";
+        if (!fresh.length) return; // nothing new from the agent (e.g. a status-only update) — stay quiet
+        // Forward the latest agent comment (the answer); mark everything up to it as seen.
+        const latest = fresh[fresh.length - 1];
+        let reply = String(latest.body || latest.content || "").trim() || "✅ Done.";
 
         // Cheap-model write-up: condense the agent's result into a concise chat reply.
         if (reply !== "✅ Done." && llmConfigured(cfg, llmKey) && cfg.llm.summarizeReplies) {
@@ -203,8 +206,13 @@ const plugin = definePlugin({
         for (const part of chunkText(out)) {
           await tx.sendText({ chatId: map.chatId, threadId: map.threadId }, mdToTelegramHtml(part), { parseMode: "HTML" });
         }
-        // Mark replied (dedupe future done events); never store null — value_json is NOT NULL.
-        try { await ctx.state.set(key, { ...map, replied: true }); } catch { /* non-fatal */ }
+        // Record the agent's answer in the router's per-chat history so the next routing decision
+        // (continue vs new thread) has context for what was just discussed.
+        if (llmConfigured(cfg, llmKey)) {
+          try { await recordAssistantReply(ctx, cfg, tx.platform, map.botKey, map.chatId, truncate(reply, cfg.maxReplyChars)); } catch { /* non-fatal */ }
+        }
+        // Advance the forward marker (dedupe across rounds); keep the thread active for follow-ups.
+        try { await ctx.state.set(key, { ...map, lastForwardedCommentId: latest.id }); } catch { /* non-fatal */ }
       } catch (e) {
         ctx.logger.error("reply-forward error", { err: e?.message || String(e) });
       }
@@ -246,7 +254,7 @@ const plugin = definePlugin({
         if (tx && parentMap.chatId) {
           await tx.sendText(
             { chatId: parentMap.chatId, threadId: parentMap.threadId },
-            `⚠️ Blocked an attempt to delegate your request to @${alias || "another agent"} — that's outside your allowed agents. Keeping it within your access.`
+            `⚠️ Part of that request was outside what I can help you with here, so I kept it within your access.`
           );
         }
       } catch (e) {

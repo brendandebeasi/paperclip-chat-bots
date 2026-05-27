@@ -54,7 +54,15 @@ export function parseConfig(raw) {
         agent: b.agent ? String(b.agent).toLowerCase() : null,
         botTokenFile: b.botTokenFile ?? null,
         botTokenEnv: b.botTokenEnv ?? null,
-        botTokenRef: b.botTokenRef ?? null
+        botTokenRef: b.botTokenRef ?? null,
+        // "concierge" (default): one front-door identity that routes across a roster of agents and
+        // replies in one voice. "direct": bound to its single `agent`, no cross-delegation.
+        mode: b.mode === "direct" ? "direct" : "concierge",
+        // Concierge only — agent aliases this bot may delegate to. null = all of llm.agents.
+        // Effective reach is always (this roster ∩ the user's allowed agents).
+        roster: Array.isArray(b.roster) ? b.roster.map((a) => String(a).toLowerCase()) : null,
+        // Optional per-bot DM allow-list (Telegram user ids, or ["*"]). null = rely on rules.users.
+        allowUsers: Array.isArray(b.allowUsers) ? b.allowUsers.map((u) => String(u)) : null
       })),
       // Short-poll: the host's ctx.http.fetch aborts a long getUpdates hold, so poll
       // with timeout=0 and pace with pollIntervalMs.

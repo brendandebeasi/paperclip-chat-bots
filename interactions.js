@@ -9,10 +9,11 @@
 // hostname allowlist and fetch() can't override the Host header.
 import { truncate, escapeHtml } from "./format.js";
 
-export const PENDING_NS = "chat-bots-pending"; // ctx.state ns: `${platform}:${chatId}` -> pending interaction
+export const PENDING_NS = "chat-bots-pending"; // ctx.state ns: `${platform}:${botKey}:${chatId}` -> pending interaction
 
-function pendKey(platform, chatId) {
-  return { scopeKind: "instance", namespace: PENDING_NS, stateKey: `${platform}:${chatId}` };
+// Keyed by botKey too (a Telegram private chatId == user id across all bots — see thread.js).
+function pendKey(platform, botKey, chatId) {
+  return { scopeKind: "instance", namespace: PENDING_NS, stateKey: `${platform}:${botKey}:${chatId}` };
 }
 
 // Shape-defensive extraction from the issue.interactions.create event.
@@ -48,7 +49,7 @@ export async function forwardInteraction(ctx, tx, map, event) {
       ? "\nReply with one number per question, comma-separated (e.g. <code>1,2</code>)."
       : "\nReply with the option number(s).");
     await tx.sendText(target, lines.join("\n"), { parseMode: "HTML" });
-    await ctx.state.set(pendKey(tx.platform, map.chatId), {
+    await ctx.state.set(pendKey(tx.platform, map.botKey, map.chatId), {
       kind, interactionId, issueId, botKey: map.botKey, threadId: map.threadId,
       questions: questions.map((q) => ({
         id: q.id,
@@ -62,7 +63,7 @@ export async function forwardInteraction(ctx, tx, map, event) {
   if (kind === "request_confirmation") {
     const prompt = ipayload.prompt || ipayload.message || ipayload.title || "Please confirm.";
     await tx.sendText(target, `❓ ${escapeHtml(prompt)}\n\nReply <b>yes</b> or <b>no</b>.`, { parseMode: "HTML" });
-    await ctx.state.set(pendKey(tx.platform, map.chatId), {
+    await ctx.state.set(pendKey(tx.platform, map.botKey, map.chatId), {
       kind, interactionId, issueId, botKey: map.botKey, threadId: map.threadId
     });
     return true;
@@ -74,7 +75,7 @@ export async function forwardInteraction(ctx, tx, map, event) {
 // If the chat has a pending interaction, treat msg as the answer + submit it. Returns true if consumed.
 export async function tryAnswerPending(ctx, tx, msg, boardApi) {
   if (!boardApi) return false;
-  const key = pendKey(msg.platform, msg.chatId);
+  const key = pendKey(msg.platform, msg.botKey, msg.chatId);
   let pend = null;
   try { pend = await ctx.state.get(key); } catch { /* ignore */ }
   if (!pend || pend.answered || !pend.interactionId) return false;

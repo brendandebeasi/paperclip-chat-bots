@@ -17,6 +17,30 @@ export function canUseAgent(policy, alias) {
   return a.includes("*") || a.includes(String(alias).toLowerCase());
 }
 
+// Per-bot DM gate (on top of rules.users membership). No allowUsers list => allow anyone the
+// global rules already authorized; ["*"] => everyone; else only the listed Telegram user ids.
+export function botAllowsUser(bot, userId) {
+  const list = bot && Array.isArray(bot.allowUsers) ? bot.allowUsers.map(String) : null;
+  if (!list || !list.length) return true;
+  return list.includes("*") || list.includes(String(userId));
+}
+
+// The agents a user can actually reach THROUGH a given bot = (what the bot offers) ∩ (user scope).
+// direct bots offer only their bound agent; concierge bots offer their `roster` (or all llm.agents).
+// Returns [{ alias, role }] using the role blurbs in cfg.llm.agents (for the router's topic pick).
+export function effectiveRoster(cfg, bot, policy) {
+  const agents = (cfg.llm && cfg.llm.agents) || {};
+  const offered =
+    bot && bot.mode === "direct"
+      ? (bot.agent ? [bot.agent] : [])
+      : (Array.isArray(bot?.roster) && bot.roster.length ? bot.roster : Object.keys(agents)).map((a) => String(a).toLowerCase());
+  const allowed = allowedAgents(policy).map((a) => String(a).toLowerCase());
+  const all = allowed.includes("*");
+  return offered
+    .filter((a) => all || allowed.includes(a))
+    .map((a) => ({ alias: a, role: String(agents[a] || a) }));
+}
+
 // Extract a leading/embedded @alias from the message text, if any.
 export function parseMention(text) {
   const m = /(?:^|\s)@([a-zA-Z][a-zA-Z0-9_]*)/.exec(String(text || ""));
