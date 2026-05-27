@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-chat-bots",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "license": "MIT",
   "type": "module",
   "description": "Platform-agnostic chat-bot plugin for Paperclip (Telegram + WhatsApp) with per-user -> per-agent routing rules.",

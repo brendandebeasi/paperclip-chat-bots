@@ -69,27 +69,28 @@ export function makeInboundHandler(ctx, cfg, getCompanyId, deps = {}) {
       if (!alias || !rosterAliases.has(alias)) { await tx.sendText(target, "Sorry — I can't help with that here."); return; }
       const agentId = await resolveAgentId(ctx, cfg, companyId, alias, deps.boardApi, deps.agents);
       if (!agentId) { await tx.sendText(target, "Something went wrong routing that — try again shortly."); return; }
-      // Create through the board API — the poll loop has no SDK invocation scope (agents.list /
-      // issues.update fail; create is unreliable too). Fall back to the SDK only without a board key.
+      // Create through the board API with status:"todo" baked in — the create POST honors it and
+      // triggers the run in ONE call. (The poll loop has no SDK invocation scope, and in-plugin
+      // ctx.http.fetch only works for POST — a follow-up PATCH/GET fails — so we must not rely on a
+      // separate status-flip.) SDK create is a last-resort fallback when no board key is configured.
       const title = `[TG] ${truncate(body, 180)}`;
       let issue = null;
       if (deps.boardApi) {
         try {
-          const res = await deps.boardApi("POST", `/api/companies/${companyId}/issues`, { title, description: body, assigneeAgentId: agentId });
+          const res = await deps.boardApi("POST", `/api/companies/${companyId}/issues`, { title, description: body, assigneeAgentId: agentId, status: "todo" });
           if (res && res.ok !== false) issue = await res.json().catch(() => null);
         } catch { /* fall through to SDK */ }
       }
       if (!issue || !issue.id) {
         try {
           issue = await ctx.issues.create({ companyId, title, description: body, assigneeAgentId: agentId });
+          await setIssueStatus(ctx, deps.boardApi, companyId, issue.id, "todo"); // best-effort (SDK path)
         } catch (e) {
           ctx.logger.error("issue create failed", { err: e?.message || String(e) });
           await tx.sendText(target, "Couldn't start that just now — try again shortly.");
           return;
         }
       }
-      // Trigger the run (status -> todo) via the board API, same scope reason.
-      await setIssueStatus(ctx, deps.boardApi, companyId, issue.id, "todo");
       // Map issue -> originating chat/bot so completion + follow-up questions route back here.
       try {
         await ctx.state.set(

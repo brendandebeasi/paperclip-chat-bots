@@ -23,15 +23,16 @@ const RUNNING_STATUS = new Set(["running", "in_progress"]);
 // We go through the board API (unscoped admin REST, same path as the comment/interaction relay),
 // falling back to the SDK only if no board key is configured.
 
-// Set an issue's status. Returns true on success.
+// Set an issue's status via the board API. Returns true on success. NOTE: from the Telegram poll
+// loop the SDK's ctx.issues.update is denied (no invocation scope), and in-plugin ctx.http.fetch
+// only works for POST (a PATCH tends to fail) — so this is best-effort. Prefer baking status into a
+// POST (e.g. create with status:"todo") over relying on a status flip.
 export async function setIssueStatus(ctx, boardApi, companyId, issueId, status) {
-  if (boardApi) {
-    try {
-      const res = await boardApi("PATCH", `/api/issues/${issueId}`, { status });
-      if (res && (res.ok === true || (typeof res.status === "number" && res.status >= 200 && res.status < 300))) return true;
-    } catch { /* fall through to SDK */ }
-  }
-  try { await ctx.issues.update(issueId, { status }, companyId); return true; } catch { return false; }
+  if (!boardApi) return false;
+  try {
+    const res = await boardApi("PATCH", `/api/issues/${issueId}`, { status });
+    return !!(res && (res.ok === true || (typeof res.status === "number" && res.status >= 200 && res.status < 300)));
+  } catch { return false; }
 }
 
 // Fetch an issue (for the resumability check). Returns the issue object or null.
