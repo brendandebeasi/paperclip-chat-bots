@@ -119,6 +119,9 @@ export function parseConfig(raw) {
       apiKeyRef: llm.apiKeyRef ?? null,
       maxTokens: Number(llm.maxTokens ?? 1024),
       temperature: Number(llm.temperature ?? 0.7),
+      // Force the router to answer via a tool call (no free-form prose that can fake a delegation).
+      // "required" (OpenAI) or "any" (some providers); set to "auto" to disable forcing.
+      toolChoice: typeof llm.toolChoice === "string" ? llm.toolChoice : "required",
       historyTurns: Number(llm.historyTurns ?? 10),
       systemPrompt: typeof llm.systemPrompt === "string" ? llm.systemPrompt : null,
       // Per-agent-alias persona system prompts (alias -> prompt). Falls back to systemPrompt.

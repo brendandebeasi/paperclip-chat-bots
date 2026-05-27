@@ -93,6 +93,23 @@ const CONTINUE_TOOL = {
   }
 };
 
+const REPLY_TOOL = {
+  type: "function",
+  function: {
+    name: "reply_to_user",
+    description:
+      "Reply directly to the user WITHOUT doing any work. Use this ONLY for greetings, small talk, or " +
+      "to ask ONE clarifying question. NEVER use it to claim you have done, sent, delegated, scheduled, " +
+      "or looked up anything — if the user wants something done, you MUST call delegate_to_agent (or " +
+      "continue_thread) instead. Saying 'I've sent that to the team' here without delegating is a lie.",
+    parameters: {
+      type: "object",
+      properties: { message: { type: "string", description: "The message to send to the user." } },
+      required: ["message"]
+    }
+  }
+};
+
 function routerSystemPrompt(cfg, roster, activeThread) {
   const lines = roster.map((r) => `- ${r.alias}: ${r.role}`).join("\n");
   const preamble = cfg.llm.systemPrompt ||
@@ -104,7 +121,12 @@ function routerSystemPrompt(cfg, roster, activeThread) {
     : "";
   return `${preamble}
 
-For ANY actionable request (scheduling, email, research, code, infra, data, sending messages, content, or anything needing tools), delegate — pick the best-fit agent and write a complete task description that includes every detail the user gave. If a request is actionable but missing a detail you truly need, ask ONE short clarifying question instead of delegating. Only reply directly for greetings or small talk. Never claim you did the work yourself.${threadBlock}
+You MUST respond by calling exactly one tool — never with plain prose:
+- delegate_to_agent — for ANY actionable request (scheduling, email, research, code, infra, data, sending messages, content, or anything needing tools). Pick the best-fit agent and write a complete, self-contained task description with every detail the user gave.
+- continue_thread — if the message is a follow-up to the active thread (when one exists).
+- reply_to_user — ONLY for greetings, small talk, or asking ONE clarifying question.
+
+CRITICAL: do not use reply_to_user to claim you have done, sent, delegated, scheduled, or looked up anything. If the user wants something done, the ONLY correct action is delegate_to_agent (or continue_thread) — that is what actually dispatches the work. A reply like "I've sent that to the team" without calling delegate_to_agent is forbidden.${threadBlock}
 
 Available agents:
 ${lines}`;
@@ -130,30 +152,42 @@ export async function routeMessage(ctx, cfg, llmKey, tx, msg, prompt, roster, ac
   try { const h = await ctx.state.get(key); if (Array.isArray(h)) history = h; } catch { /* ignore */ }
   const userMsg = { role: "user", content: prompt };
   const messages = [{ role: "system", content: routerSystemPrompt(cfg, roster, activeThread) }, ...history, userMsg];
-  const tools = activeThread ? [DELEGATE_TOOL, CONTINUE_TOOL] : [DELEGATE_TOOL];
+  const tools = [DELEGATE_TOOL, REPLY_TOOL, ...(activeThread ? [CONTINUE_TOOL] : [])];
 
   try { await tx.typing?.(target); } catch { /* non-fatal */ }
-  // tool_choice:auto + headroom — Kimi reasons in content before emitting the tool call.
-  const m = await callLlm(ctx, cfg, llmKey, messages, {
-    tools, toolChoice: "auto", maxTokens: Math.max(Number(cfg.llm.maxTokens) || 0, 700)
-  });
+  // Force a tool call so the model can't emit free-form prose that FABRICATES a delegation
+  // ("I've sent that to the team") without actually dispatching it. If the provider rejects the
+  // forced choice (call returns null), retry once with "auto" so we degrade instead of breaking.
+  const maxTokens = Math.max(Number(cfg.llm.maxTokens) || 0, 700);
+  let m = await callLlm(ctx, cfg, llmKey, messages, { tools, toolChoice: cfg.llm.toolChoice || "required", maxTokens });
+  if (!m && (cfg.llm.toolChoice || "required") !== "auto") {
+    m = await callLlm(ctx, cfg, llmKey, messages, { tools, toolChoice: "auto", maxTokens });
+  }
 
   const saveHistory = async (assistantContent) => {
     const trimmed = [...history, userMsg, { role: "assistant", content: assistantContent }]
       .slice(-Math.max(2, cfg.llm.historyTurns * 2));
     try { await ctx.state.set(key, trimmed); } catch { /* non-fatal */ }
   };
+  const sendReply = async (text) => {
+    await saveHistory(text);
+    for (const part of chunkText(text)) await tx.sendText(target, mdToTelegramHtml(part), { parseMode: "HTML" });
+    return { kind: "reply" };
+  };
+
+  const calls = Array.isArray(m?.tool_calls) ? m.tool_calls : [];
+  const pick = (name) => calls.find((t) => t?.function?.name === name);
 
   // Follow-up to the active thread: caller posts the user's message as a comment + resumes the agent.
-  if (activeThread && m?.tool_calls?.some((t) => t?.function?.name === "continue_thread")) {
+  if (activeThread && pick("continue_thread")) {
     await saveHistory("(continuing the active thread)");
     return { kind: "continue" };
   }
 
-  const tc = m?.tool_calls?.find((t) => t?.function?.name === "delegate_to_agent");
-  if (tc) {
+  const dc = pick("delegate_to_agent");
+  if (dc) {
     let args = {};
-    try { args = JSON.parse(tc.function.arguments || "{}"); } catch { /* ignore */ }
+    try { args = JSON.parse(dc.function.arguments || "{}"); } catch { /* ignore */ }
     const agent = String(args.agent || "").toLowerCase().trim();
     const task = String(args.task || prompt).trim();
     if (agent) {
@@ -162,13 +196,16 @@ export async function routeMessage(ctx, cfg, llmKey, tx, msg, prompt, roster, ac
     }
   }
 
-  const reply = (m?.content || "").trim();
-  if (!reply) {
-    await tx.sendText(target, "⚠️ I couldn't reach the model just now — try again in a moment.");
-    return { kind: "reply" };
+  const rc = pick("reply_to_user");
+  if (rc) {
+    let msg = "";
+    try { msg = String(JSON.parse(rc.function.arguments || "{}").message || "").trim(); } catch { /* ignore */ }
+    if (msg) return await sendReply(msg);
   }
-  await saveHistory(reply);
-  for (const part of chunkText(reply)) await tx.sendText(target, mdToTelegramHtml(part), { parseMode: "HTML" });
+
+  // Fallback: model returned no usable tool call. Do NOT pass through free-form content as if it
+  // were a real reply (that's the fabrication path) — nudge instead.
+  await tx.sendText(target, "⚠️ I couldn't process that just now — try again in a moment.");
   return { kind: "reply" };
 }
 
