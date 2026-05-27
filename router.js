@@ -67,23 +67,28 @@ export function makeInboundHandler(ctx, cfg, getCompanyId, deps = {}) {
     const delegate = async (rawAlias, body) => {
       const alias = String(rawAlias || "").toLowerCase().trim();
       if (!alias || !rosterAliases.has(alias)) { await tx.sendText(target, "Sorry — I can't help with that here."); return; }
-      const agentId = await resolveAgentId(ctx, cfg, companyId, alias);
+      const agentId = await resolveAgentId(ctx, cfg, companyId, alias, deps.boardApi);
       if (!agentId) { await tx.sendText(target, "Something went wrong routing that — try again shortly."); return; }
-      let issue;
-      try {
-        issue = await ctx.issues.create({
-          companyId,
-          title: `[TG] ${truncate(body, 180)}`,
-          description: body,
-          assigneeAgentId: agentId
-        });
-      } catch (e) {
-        ctx.logger.error("issue create failed", { err: e?.message || String(e) });
-        await tx.sendText(target, "Couldn't start that just now — try again shortly.");
-        return;
+      // Create through the board API — the poll loop has no SDK invocation scope (agents.list /
+      // issues.update fail; create is unreliable too). Fall back to the SDK only without a board key.
+      const title = `[TG] ${truncate(body, 180)}`;
+      let issue = null;
+      if (deps.boardApi) {
+        try {
+          const res = await deps.boardApi("POST", `/api/companies/${companyId}/issues`, { title, description: body, assigneeAgentId: agentId });
+          if (res && res.ok !== false) issue = await res.json().catch(() => null);
+        } catch { /* fall through to SDK */ }
       }
-      // Trigger the run via the board API — ctx.issues.update has no invocation scope from the
-      // poll loop ("not allowed to perform issues.update"); the board key works regardless.
+      if (!issue || !issue.id) {
+        try {
+          issue = await ctx.issues.create({ companyId, title, description: body, assigneeAgentId: agentId });
+        } catch (e) {
+          ctx.logger.error("issue create failed", { err: e?.message || String(e) });
+          await tx.sendText(target, "Couldn't start that just now — try again shortly.");
+          return;
+        }
+      }
+      // Trigger the run (status -> todo) via the board API, same scope reason.
       await setIssueStatus(ctx, deps.boardApi, companyId, issue.id, "todo");
       // Map issue -> originating chat/bot so completion + follow-up questions route back here.
       try {

@@ -6,17 +6,27 @@
 // extra nicknames (e.g. { ada: ["ada", "ada-cto", "cto"] }) without an explicit id mapping.
 const KNOWN_SYNONYMS = {};
 
-export async function resolveAgentId(ctx, cfg, companyId, alias) {
+export async function resolveAgentId(ctx, cfg, companyId, alias, boardApi) {
   const a = String(alias).toLowerCase();
   const mapped = cfg.agentAliases?.[a];
   if (mapped) return mapped;
   const syns = KNOWN_SYNONYMS[a] || [a];
   let agents = [];
-  try {
-    agents = await ctx.agents.list({ companyId });
-  } catch (e) {
-    ctx.logger.error("agents.list failed", { err: String(e) });
-    return null;
+  // The Telegram poll loop has no SDK invocation scope (agents.list throws "missing invocation
+  // scope"), so prefer the board API; fall back to the SDK only if no board key is configured.
+  if (boardApi) {
+    try {
+      const res = await boardApi("GET", `/api/companies/${companyId}/agents`);
+      if (res && res.ok !== false) { const j = await res.json().catch(() => null); if (Array.isArray(j)) agents = j; }
+    } catch { /* fall through to SDK */ }
+  }
+  if (!agents.length) {
+    try {
+      agents = await ctx.agents.list({ companyId });
+    } catch (e) {
+      ctx.logger.error("agents.list failed", { err: String(e) });
+      return null;
+    }
   }
   const norm = (s) => String(s || "").toLowerCase();
   const match =
